@@ -33,4 +33,5 @@ jobs:
         uses: houseabsolute/actions-rust-release@v0
         with:
           executable-name: flatbox
-          target: ${{ matrix.platform.target }}
+          target: ${{matrix.platform.target }}
+          changes-file: ""
