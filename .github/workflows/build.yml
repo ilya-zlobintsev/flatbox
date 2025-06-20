@@ -31,7 +31,12 @@ jobs:
           
       - name: Publish artifacts and release
         uses: houseabsolute/actions-rust-release@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           executable-name: flatbox
           target: ${{matrix.platform.target }}
           changes-file: ""
+          
+    permissions:
+      contents: write
