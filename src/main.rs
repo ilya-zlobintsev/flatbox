@@ -10,12 +10,12 @@ use clap::Parser;
 use indexmap::IndexMap;
 use std::{
     collections::HashSet,
-    fs,
-    path::Path,
+    env, fs,
+    path::{Path, PathBuf},
     process::{ExitCode, Stdio},
 };
 
-const BASE_FLATPAK_PATH: &str = "/var/lib/flatpak";
+const DEFAULT_INSTALL_PATH: &str = "/var/lib/flatpak";
 const ROOT_USR_MERGED_DIRS: [&str; 5] = ["bin", "lib", "lib32", "lib64", "sbin"];
 const FORBIDDEN_HOST_ROOT_DIRS: [&str; 5] = ["app", "usr", "run", "etc", "var"];
 const FORBIDDEN_RUN_DIRS: [&str; 2] = ["flatpak", "host"];
@@ -83,13 +83,29 @@ fn main() -> anyhow::Result<ExitCode> {
 }
 
 fn run(run: RunCommand) -> anyhow::Result<ExitCode> {
-    let available_runtimes = list_available_runtimes().context("Could nost list runtimes")?;
+    let user_install_dir = env::var("HOME")
+        .ok()
+        .map(|home| {
+            Path::new(&home)
+                .join(".local")
+                .join("share")
+                .join("flatpak")
+        })
+        .filter(|path| path.exists());
+
+    let install_dirs: Vec<PathBuf> = [PathBuf::from(DEFAULT_INSTALL_PATH)]
+        .into_iter()
+        .chain(user_install_dir)
+        .chain(run.flatpak_install_path)
+        .collect();
+
+    let available_runtimes =
+        list_available_runtimes(&install_dirs).context("Could nost list runtimes")?;
 
     let (runtime, app_files_path) = match (run.app, run.runtime) {
         (Some(app), None) => {
-            let app_path = Path::new(BASE_FLATPAK_PATH)
-                .join("app")
-                .join(app)
+            let app_path = find_install_path(&app, true, &install_dirs)
+                .context("Could not find app install dir")?
                 .join("current")
                 .join("active");
             let app_metadata_path = app_path.join("metadata");
@@ -113,9 +129,8 @@ fn run(run: RunCommand) -> anyhow::Result<ExitCode> {
         (None, None) => bail!("Either app or runtime has to be specified"),
     };
 
-    let runtime_path = Path::new(BASE_FLATPAK_PATH)
-        .join("runtime")
-        .join(runtime)
+    let runtime_path = find_install_path(&runtime, false, &install_dirs)
+        .context("Could not find runtime install dir")?
         .join("active");
     let runtime_metadata_path = runtime_path.join("metadata");
 
@@ -137,7 +152,12 @@ fn run(run: RunCommand) -> anyhow::Result<ExitCode> {
 
     setup_host_root_dirs(&mut bwrap)?;
 
-    setup_runtime_extensions(&mut bwrap, &runtime_metadata, &available_runtimes)?;
+    setup_runtime_extensions(
+        &mut bwrap,
+        &runtime_metadata,
+        &available_runtimes,
+        &install_dirs,
+    )?;
 
     add_ld_so_conf(&mut bwrap)?;
 
@@ -222,6 +242,7 @@ fn setup_runtime_extensions(
     bwrap: &mut BwrapBuilder,
     runtime_metadata: &IndexMap<&str, IndexMap<&str, &str>>,
     available_runtimes: &[String],
+    install_dirs: &[PathBuf],
 ) -> anyhow::Result<()> {
     let runtime = runtime_metadata
         .get("Runtime")
@@ -244,6 +265,7 @@ fn setup_runtime_extensions(
                 arch,
                 version,
                 available_runtimes,
+                install_dirs,
             )
             .with_context(|| format!("Could not set up extension {extension}"))?;
         }
@@ -259,6 +281,7 @@ fn setup_extension(
     arch: &str,
     runtime_version: &str,
     available_runtimes: &[String],
+    install_dirs: &[PathBuf],
 ) -> anyhow::Result<()> {
     let directory = extension_metadata
         .get("directory")
@@ -306,9 +329,8 @@ fn setup_extension(
             continue;
         }
 
-        let extension_base_path = Path::new(BASE_FLATPAK_PATH)
-            .join("runtime")
-            .join(extension)
+        let extension_base_path = find_install_path(extension, false, install_dirs)
+            .context("Could not find extension install dir")?
             .join(arch);
         for version in allowed_versions.split(';') {
             let extension_version_path = extension_base_path
@@ -447,15 +469,34 @@ fn setup_env(bwrap: &mut BwrapBuilder, runtime_env: IndexMap<&str, &str>) {
     }
 }
 
-fn list_available_runtimes() -> anyhow::Result<Vec<String>> {
-    fs::read_dir(Path::new(BASE_FLATPAK_PATH).join("runtime"))?
-        .map(|entry| {
-            entry.context("Could not read entry").and_then(|entry| {
-                entry
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| anyhow!("Invalid runtime name"))
+fn list_available_runtimes(install_dirs: &[PathBuf]) -> anyhow::Result<Vec<String>> {
+    let mut output = Vec::new();
+
+    for dir in install_dirs {
+        let dir_runtimes = fs::read_dir(dir.join("runtime"))?
+            .map(|entry| {
+                entry.context("Could not read entry").and_then(|entry| {
+                    entry
+                        .file_name()
+                        .into_string()
+                        .map_err(|_| anyhow!("Invalid runtime name"))
+                })
             })
-        })
-        .collect()
+            .collect::<anyhow::Result<Vec<String>>>()?;
+
+        output.extend(dir_runtimes);
+    }
+
+    Ok(output)
+}
+
+fn find_install_path(name: &str, is_app: bool, install_dirs: &[PathBuf]) -> Option<PathBuf> {
+    let infix = if is_app { "app" } else { "runtime" };
+    for dir in install_dirs {
+        let path = Path::new(dir).join(infix).join(name);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
 }
