@@ -100,11 +100,11 @@ fn run(run: RunCommand) -> anyhow::Result<ExitCode> {
         .collect();
 
     let available_runtimes =
-        list_available_runtimes(&install_dirs).context("Could nost list runtimes")?;
+        list_available_runtimes(&install_dirs).context("Could not list runtimes")?;
 
-    let (runtime, app_files_path) = match (run.app, run.runtime) {
+    let (runtime, app_files_path) = match (&run.app, run.runtime) {
         (Some(app), None) => {
-            let app_path = find_install_path(&app, true, &install_dirs)
+            let app_path = find_install_path(app, true, &install_dirs)
                 .context("Could not find app install dir")?
                 .join("current")
                 .join("active");
@@ -161,7 +161,7 @@ fn run(run: RunCommand) -> anyhow::Result<ExitCode> {
 
     add_ld_so_conf(&mut bwrap)?;
 
-    setup_env(&mut bwrap, runtime_env);
+    setup_env(&mut bwrap, runtime_env, run.app.as_deref());
 
     // bwrap.bind_data("/etc/ld.so.cache", &[])?;
 
@@ -456,7 +456,7 @@ fn setup_host_root_dirs(bwrap: &mut BwrapBuilder) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn setup_env(bwrap: &mut BwrapBuilder, runtime_env: IndexMap<&str, &str>) {
+fn setup_env(bwrap: &mut BwrapBuilder, runtime_env: IndexMap<&str, &str>, app_id: Option<&str>) {
     for (env, value) in DEFAULT_ENV {
         match value {
             Some(value) => bwrap.set_env(env, value),
@@ -467,13 +467,25 @@ fn setup_env(bwrap: &mut BwrapBuilder, runtime_env: IndexMap<&str, &str>) {
     for (env, value) in runtime_env {
         bwrap.set_env(env, value);
     }
+
+    if let Some(app) = app_id {
+        if let Ok(home) = env::var("HOME") {
+            let app_id_dir = Path::new(&home).join(".var").join("app").join(app);
+            bwrap.set_env("XDG_DATA_HOME", app_id_dir.join("data"));
+            bwrap.set_env("XDG_CONFIG_HOME", app_id_dir.join("config"));
+            bwrap.set_env("XDG_CACHE_HOME", app_id_dir.join("cache"));
+            bwrap.set_env("XDG_STATE_HOME", app_id_dir.join(".local").join("state"));
+        }
+    }
 }
 
 fn list_available_runtimes(install_dirs: &[PathBuf]) -> anyhow::Result<Vec<String>> {
     let mut output = Vec::new();
 
     for dir in install_dirs {
-        let dir_runtimes = fs::read_dir(dir.join("runtime"))?
+        let dir_runtimes = fs::read_dir(dir.join("runtime"))
+            .into_iter()
+            .flatten()
             .map(|entry| {
                 entry.context("Could not read entry").and_then(|entry| {
                     entry
