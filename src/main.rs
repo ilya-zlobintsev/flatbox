@@ -235,6 +235,8 @@ fn setup_runtime(
         }
     }
 
+    bwrap.ro_bind_data("/.flatpak-info", &[])?;
+
     Ok(())
 }
 
