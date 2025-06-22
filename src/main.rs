@@ -21,11 +21,17 @@ const FORBIDDEN_HOST_ROOT_DIRS: [&str; 5] = ["app", "usr", "run", "etc", "var"];
 const FORBIDDEN_RUN_DIRS: [&str; 2] = ["flatpak", "host"];
 const EXPOSED_ETC_PATHS: [&str; 3] = ["passwd", "group", "shadow"];
 const EXTENSION_PREFIX: &str = "Extension ";
-const PATH_BINDINDGS: [(&str, &str, bool); 4] = [
+const PATH_BINDINDGS: [(&str, &str, bool); 6] = [
     ("/", "/run/host/root", true),
     ("/usr/share/fonts", "/run/host/fonts", false),
     ("/usr/lib/fontconfig/cache", "/run/host/fonts-cache", false),
     ("/usr/share/icons", "/run/host/share/icons", false),
+    ("/etc/machine-id", "/etc/machine-id", false),
+    (
+        "/var/lib/dbus/machine-id",
+        "/var/lib/dbus/machine-id",
+        false,
+    ),
 ];
 const DEFAULT_ENV: [(&str, Option<&str>); 44] = [
     ("FLATBOX_ENV", Some("1")),
