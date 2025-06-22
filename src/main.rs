@@ -84,11 +84,11 @@ fn main() -> anyhow::Result<ExitCode> {
     let args = Args::try_parse()?;
 
     match args.command {
-        args::Command::Run(cmd) => run(cmd),
+        args::Command::Run(cmd) => run(cmd, args.verbose),
     }
 }
 
-fn run(run: RunCommand) -> anyhow::Result<ExitCode> {
+fn run(run: RunCommand, verbose: bool) -> anyhow::Result<ExitCode> {
     let user_install_dir = env::var("HOME")
         .ok()
         .map(|home| {
@@ -172,7 +172,9 @@ fn run(run: RunCommand) -> anyhow::Result<ExitCode> {
     // bwrap.bind_data("/etc/ld.so.cache", &[])?;
 
     let (mut cmd, _data) = bwrap.finish();
-    eprintln!("Generated cmd: {cmd:#?}");
+    if verbose {
+        eprintln!("Generated cmd: {cmd:#?}");
+    }
 
     // let ldconfig_status = Command::new(cmd.get_program())
     //     .args(cmd.get_args())

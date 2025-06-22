@@ -6,6 +6,8 @@ use std::path::PathBuf;
 pub struct Args {
     #[command(subcommand)]
     pub command: Command,
+    #[arg(short, long, default_value = "false")]
+    pub verbose: bool,
 }
 
 #[derive(Subcommand)]
