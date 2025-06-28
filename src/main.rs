@@ -355,6 +355,7 @@ fn setup_extension(
         }
     }
 
+    let mut existing_symlinks = HashSet::new();
     for (source, target) in &mounted_paths {
         if let Some(merge_dirs) = extension_metadata.get("merge-dirs") {
             let mut processed_paths = HashSet::new();
@@ -372,7 +373,9 @@ fn setup_extension(
                             let symlink_target = extension_base_mount_path
                                 .join(merge_dir)
                                 .join(entry.file_name());
-                            bwrap.symlink(symlink_source, symlink_target);
+                            if existing_symlinks.insert(symlink_target.clone()) {
+                                bwrap.symlink(symlink_source, symlink_target);
+                            }
                         }
                     }
                 }
