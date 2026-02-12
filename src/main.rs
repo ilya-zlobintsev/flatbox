@@ -346,20 +346,21 @@ fn setup_extension(
             continue;
         }
 
-        let extension_base_path = find_install_path(extension, false, install_dirs)
-            .context("Could not find extension install dir")?
-            .join(arch);
-        for version in allowed_versions.split(';') {
-            let extension_version_path = extension_base_path
-                .join(version)
-                .join("active")
-                .join("files");
-            if extension_version_path.exists() {
-                let extension_mount_path = extension_base_mount_path.join(extension_impl_name);
-                bwrap.ro_bind(&extension_version_path, &extension_mount_path);
-                mounted_paths.push((extension_version_path, extension_mount_path));
-            }
-        }
+        let full_extension_path = allowed_versions
+            .split(';')
+            .map(|version| {
+                Path::new(extension)
+                    .join(arch)
+                    .join(version)
+                    .join("active")
+                    .join("files")
+            })
+            .find_map(|path| find_install_path(path, false, install_dirs))
+            .context("Could not find extension install dir")?;
+
+        let extension_mount_path = extension_base_mount_path.join(extension_impl_name);
+        bwrap.ro_bind(&full_extension_path, &extension_mount_path);
+        mounted_paths.push((full_extension_path, extension_mount_path));
     }
 
     let mut existing_symlinks = HashSet::new();
@@ -524,10 +525,14 @@ fn list_available_runtimes(install_dirs: &[PathBuf]) -> anyhow::Result<Vec<Strin
     Ok(output)
 }
 
-fn find_install_path(name: &str, is_app: bool, install_dirs: &[PathBuf]) -> Option<PathBuf> {
+fn find_install_path(
+    name: impl AsRef<Path>,
+    is_app: bool,
+    install_dirs: &[PathBuf],
+) -> Option<PathBuf> {
     let infix = if is_app { "app" } else { "runtime" };
     for dir in install_dirs {
-        let path = Path::new(dir).join(infix).join(name);
+        let path = Path::new(dir).join(infix).join(name.as_ref());
         if path.exists() {
             return Some(path);
         }
