@@ -550,6 +550,10 @@ fn setup_env(bwrap: &mut BwrapBuilder, runtime_env: IndexMap<&str, &str>, app_id
         bwrap.set_env("XDG_CACHE_HOME", app_id_dir.join("cache"));
         bwrap.set_env("XDG_STATE_HOME", app_id_dir.join(".local").join("state"));
     }
+
+    if let Ok(host_path) = env::var("PATH") {
+        bwrap.set_env("FLATBOX_HOST_PATH", host_path);
+    }
 }
 
 fn list_available_runtimes(install_dirs: &[PathBuf]) -> anyhow::Result<Vec<String>> {
