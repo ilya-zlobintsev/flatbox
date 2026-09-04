@@ -111,7 +111,7 @@ fn run(run: RunCommand, verbose: bool) -> anyhow::Result<ExitCode> {
     let raw_app_metadata: Option<String>;
     let (runtime, app_files_path, app_metadata) = match (&run.app, run.runtime) {
         (Some(app), None) => {
-            let app_path = find_install_path(app, true, &install_dirs)
+            let app_path = find_install_path(app, None, &install_dirs)
                 .context("Could not find app install dir")?
                 .join("current")
                 .join("active");
@@ -137,7 +137,7 @@ fn run(run: RunCommand, verbose: bool) -> anyhow::Result<ExitCode> {
         (None, None) => bail!("Either app or runtime has to be specified"),
     };
 
-    let runtime_path = find_install_path(&runtime, false, &install_dirs)
+    let runtime_path = find_install_path(&runtime, Some(RuntimeType::Runtime), &install_dirs)
         .context("Could not find runtime install dir")?
         .join("active");
     let runtime_metadata_path = runtime_path.join("metadata");
@@ -270,7 +270,7 @@ fn setup_runtime(
 fn setup_runtime_extensions(
     bwrap: &mut BwrapBuilder,
     runtime_metadata: &IndexMap<&str, IndexMap<&str, &str>>,
-    available_runtimes: &[String],
+    available_runtimes: &[(String, RuntimeType)],
     install_dirs: &[PathBuf],
 ) -> anyhow::Result<()> {
     let runtime = runtime_metadata
@@ -308,7 +308,7 @@ fn setup_app_extensions(
     bwrap: &mut BwrapBuilder,
     app_metadata: &IndexMap<&str, IndexMap<&str, &str>>,
     runtime: &str,
-    available_runtimes: &[String],
+    available_runtimes: &[(String, RuntimeType)],
     install_dirs: &[PathBuf],
 ) -> anyhow::Result<()> {
     let mut runtime_split = runtime.split('/').skip(1);
@@ -338,13 +338,14 @@ fn setup_app_extensions(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn setup_extension(
     extension_metadata: &IndexMap<&str, &str>,
     bwrap: &mut BwrapBuilder,
     name: &str,
     arch: &str,
     runtime_version: &str,
-    available_runtimes: &[String],
+    available_runtimes: &[(String, RuntimeType)],
     install_dirs: &[PathBuf],
     base_path: &Path,
 ) -> anyhow::Result<()> {
@@ -365,7 +366,7 @@ fn setup_extension(
 
     let mut mounted_paths = Vec::new();
 
-    for extension in available_runtimes {
+    for (extension, runtime_type) in available_runtimes {
         let Some(extension_impl_name) = extension.strip_prefix(&expected_prefix) else {
             continue;
         };
@@ -397,13 +398,14 @@ fn setup_extension(
         if let Some(full_extension_path) = allowed_versions
             .split(';')
             .map(|version| {
-                Path::new(extension)
-                    .join(arch)
-                    .join(version)
-                    .join("active")
-                    .join("files")
+                let path = Path::new(extension).join(arch).join(version);
+
+                match runtime_type {
+                    RuntimeType::Runtime => path.join("active").join("files"),
+                    RuntimeType::Extension => path,
+                }
             })
-            .find_map(|path| find_install_path(path, false, install_dirs))
+            .find_map(|path| find_install_path(path, Some(*runtime_type), install_dirs))
         {
             let extension_mount_path = extension_base_mount_path.join(extension_impl_name);
             bwrap.ro_bind(&full_extension_path, &extension_mount_path);
@@ -556,22 +558,32 @@ fn setup_env(bwrap: &mut BwrapBuilder, runtime_env: IndexMap<&str, &str>, app_id
     }
 }
 
-fn list_available_runtimes(install_dirs: &[PathBuf]) -> anyhow::Result<Vec<String>> {
+fn list_available_runtimes(install_dirs: &[PathBuf]) -> anyhow::Result<Vec<(String, RuntimeType)>> {
     let mut output = Vec::new();
 
     for dir in install_dirs {
         let dir_runtimes = fs::read_dir(dir.join("runtime"))
             .into_iter()
             .flatten()
-            .map(|entry| {
-                entry.context("Could not read entry").and_then(|entry| {
-                    entry
-                        .file_name()
-                        .into_string()
-                        .map_err(|_| anyhow!("Invalid runtime name"))
-                })
+            .map(|item| (item, RuntimeType::Runtime))
+            .chain(
+                fs::read_dir(dir.join("extension"))
+                    .into_iter()
+                    .flatten()
+                    .map(|item| (item, RuntimeType::Extension)),
+            )
+            .map(|(entry, runtime_type)| {
+                entry
+                    .context("Could not read entry")
+                    .and_then(|entry| {
+                        entry
+                            .file_name()
+                            .into_string()
+                            .map_err(|_| anyhow!("Invalid runtime name"))
+                    })
+                    .map(|value| (value, runtime_type))
             })
-            .collect::<anyhow::Result<Vec<String>>>()?;
+            .collect::<anyhow::Result<Vec<(String, RuntimeType)>>>()?;
 
         output.extend(dir_runtimes);
     }
@@ -579,12 +591,23 @@ fn list_available_runtimes(install_dirs: &[PathBuf]) -> anyhow::Result<Vec<Strin
     Ok(output)
 }
 
+#[derive(Clone, Copy)]
+enum RuntimeType {
+    Runtime,
+    Extension,
+}
+
+/// No runtime_type = app
 fn find_install_path(
     name: impl AsRef<Path>,
-    is_app: bool,
+    runtime_type: Option<RuntimeType>,
     install_dirs: &[PathBuf],
 ) -> Option<PathBuf> {
-    let infix = if is_app { "app" } else { "runtime" };
+    let infix = match runtime_type {
+        Some(RuntimeType::Runtime) => "runtime",
+        Some(RuntimeType::Extension) => "extension",
+        None => "app",
+    };
     for dir in install_dirs {
         let path = Path::new(dir).join(infix).join(name.as_ref());
         if path.exists() {
