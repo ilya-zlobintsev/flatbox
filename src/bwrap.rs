@@ -1,16 +1,14 @@
 use anyhow::Context;
-use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+use memfd::{Memfd, MemfdOptions};
 use std::{
     ffi::{OsStr, OsString},
-    fs::{File, OpenOptions},
     io::{Seek, SeekFrom, Write},
     iter,
     os::{fd::AsRawFd, unix::ffi::OsStrExt},
-    path::PathBuf,
     process::Command,
 };
-use tempdir::TempDir;
 
+#[derive(Debug)]
 pub struct BwrapBuilder {
     command: Command,
     args: OsString,
@@ -62,78 +60,41 @@ impl BwrapBuilder {
         self.arg("--dev-bind").arg(source).arg(dest)
     }
 
-    /*pub fn ro_bind_data(
-        &mut self,
-        path: impl AsRef<OsStr>,
-        contents: &[u8],
-    ) -> anyhow::Result<&mut Self> {
-        let memfd = MemfdOptions::new()
-            .allow_sealing(true)
-            .close_on_exec(false)
-            .create("memfd-data")
-            .context("Could not create memfd")?;
-
-        eprintln!(
-            "creating file with contents {:?}",
-            std::str::from_utf8(contents)
-        );
-
-        memfd
-            .as_file()
-            .write_all(contents)
-            .context("Could not write to memfd")?;
-        memfd
-            .as_file()
-            .seek(SeekFrom::Start(0))
-            .context("Could not seek memfd")?;
-
-        memfd.add_seals(&[
-            FileSeal::SealShrink,
-            FileSeal::SealGrow,
-            FileSeal::SealWrite,
-            FileSeal::SealSeal,
-        ])?;
-
-        let raw_fd = memfd.as_raw_fd();
-        self.data.mem_fds.push(memfd);
-
-        Ok(self.arg("--ro-bind-data").arg(raw_fd.to_string()).arg(path))
-    }*/
+    pub fn dir(&mut self, path: impl AsRef<OsStr>) -> &mut Self {
+        self.arg("--dir").arg(path)
+    }
 
     pub fn ro_bind_data(
         &mut self,
         path: impl AsRef<OsStr>,
         contents: &[u8],
     ) -> anyhow::Result<&mut Self> {
-        let tempfile_path = self.tempfile(contents)?;
-        Ok(self.arg("--ro-bind").arg(tempfile_path).arg(path))
+        let tempfile_fd = self.tempfile(contents)?;
+        Ok(self
+            .arg("--ro-bind-data")
+            .arg(tempfile_fd.to_string())
+            .arg(path))
     }
 
-    fn tempfile(&mut self, contents: &[u8]) -> anyhow::Result<PathBuf> {
-        let tempfile_path = self
-            .data
-            .tempdir
-            .path()
-            .join(format!("tempfile-{}", self.data.files.len()));
-
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&tempfile_path)
-            .context("Could not create file")?;
-
-        fcntl(&file, FcntlArg::F_SETFD(FdFlag::empty()))?;
+    fn tempfile(&mut self, contents: &[u8]) -> anyhow::Result<i32> {
+        let mut file = MemfdOptions::new()
+            .allow_sealing(true)
+            .close_on_exec(false)
+            .create("memfd-data")
+            .context("Could not create memfd")?
+            .into_file();
 
         file.write_all(contents)
             .context("Could not write to file")?;
         file.seek(SeekFrom::Start(0))
             .context("Could not seek file")?;
 
-        self.data.files.push(file);
+        let memfd = Memfd::try_from_file(file).expect("File is transferrable back to memfd");
+        let raw_fd = memfd.as_raw_fd();
 
-        Ok(tempfile_path)
+        self.data.mem_fds.push(memfd);
+
+        Ok(raw_fd)
     }
 
     pub fn wrap_apparmor_unconfined(mut self) -> Self {
@@ -153,8 +114,7 @@ impl BwrapBuilder {
 
     pub fn finish(mut self) -> anyhow::Result<(Command, BwrapData)> {
         let args = self.args.as_bytes().to_vec();
-        self.tempfile(&args)?;
-        let args_fd = self.data.files.last().unwrap().as_raw_fd();
+        let args_fd = self.tempfile(&args)?;
 
         self.command
             .arg("--args")
@@ -165,19 +125,7 @@ impl BwrapBuilder {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BwrapData {
-    // mem_fds: Vec<Memfd>,
-    tempdir: TempDir,
-    files: Vec<File>,
-}
-
-impl Default for BwrapData {
-    fn default() -> Self {
-        Self {
-            // mem_fds: Default::default(),
-            tempdir: TempDir::new("flatbox-setup").expect("Could not create tempdir"),
-            files: Default::default(),
-        }
-    }
+    mem_fds: Vec<Memfd>,
 }

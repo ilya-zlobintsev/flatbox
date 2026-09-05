@@ -7,6 +7,4 @@ edition = "2024"
 anyhow = "1.0.98"
 clap = { version = "4.5.40", features = ["derive"] }
 indexmap = "2.9.0"
-nix = { version = "0.31.3", features = ["fs"] }
-# memfd = "0.6.4"
-tempdir = "0.3.7"
+memfd = "0.6.4"

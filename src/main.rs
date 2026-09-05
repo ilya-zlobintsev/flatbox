@@ -190,10 +190,10 @@ fn run(run: RunCommand, verbose: bool) -> anyhow::Result<ExitCode> {
 
     // bwrap.bind_data("/etc/ld.so.cache", &[])?;
 
-    let (mut cmd, _data) = bwrap.finish()?;
     if verbose {
-        eprintln!("Generated cmd: {cmd:#?}");
+        eprintln!("Using cmd: {bwrap:#?}");
     }
+    let (mut cmd, _data) = bwrap.finish()?;
 
     // let ldconfig_status = Command::new(cmd.get_program())
     //     .args(cmd.get_args())
@@ -263,6 +263,7 @@ fn setup_runtime(
     }
 
     bwrap.ro_bind_data("/.flatpak-info", &[])?;
+    bwrap.dir("/run/flatpak/ld.so.conf.d");
 
     Ok(())
 }
@@ -414,7 +415,7 @@ fn setup_extension(
     }
 
     let mut existing_symlinks = HashSet::new();
-    for (source, target) in &mounted_paths {
+    for (i, (source, target)) in mounted_paths.iter().enumerate() {
         if let Some(merge_dirs) = extension_metadata.get("merge-dirs") {
             let mut processed_paths = HashSet::new();
             for merge_dir in merge_dirs.split(';') {
@@ -453,7 +454,7 @@ fn setup_extension(
                 .context("Invalid extension name")?
                 .to_str()
                 .context("Invalid extension name")?;
-            let filename = format!("runtime-{name}.{impl_name}.conf");
+            let filename = format!("runtime-{i}-{name}.{impl_name}.conf");
             let ld_config_path = Path::new("/run/flatpak/ld.so.conf.d").join(filename);
 
             bwrap.ro_bind_data(&ld_config_path, ld_contents.as_bytes())?;
