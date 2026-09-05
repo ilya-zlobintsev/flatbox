@@ -1,9 +1,11 @@
 use anyhow::Context;
+use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 use std::{
-    ffi::OsStr,
-    fs::File,
+    ffi::{OsStr, OsString},
+    fs::{File, OpenOptions},
     io::{Seek, SeekFrom, Write},
     iter,
+    os::{fd::AsRawFd, unix::ffi::OsStrExt},
     path::PathBuf,
     process::Command,
 };
@@ -11,6 +13,7 @@ use tempdir::TempDir;
 
 pub struct BwrapBuilder {
     command: Command,
+    args: OsString,
     data: BwrapData,
 }
 
@@ -19,11 +22,15 @@ impl BwrapBuilder {
         Self {
             command: Command::new("bwrap"),
             data: BwrapData::default(),
+            args: OsString::new(),
         }
     }
 
     fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
-        self.command.arg(arg);
+        if !self.args.is_empty() {
+            self.args.push("\0");
+        }
+        self.args.push(arg);
         self
     }
 
@@ -108,7 +115,16 @@ impl BwrapBuilder {
             .tempdir
             .path()
             .join(format!("tempfile-{}", self.data.files.len()));
-        let mut file = File::create(&tempfile_path).context("Could not create file")?;
+
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tempfile_path)
+            .context("Could not create file")?;
+
+        fcntl(&file, FcntlArg::F_SETFD(FdFlag::empty()))?;
 
         file.write_all(contents)
             .context("Could not write to file")?;
@@ -135,8 +151,17 @@ impl BwrapBuilder {
         self
     }
 
-    pub fn finish(self) -> (Command, BwrapData) {
-        (self.command, self.data)
+    pub fn finish(mut self) -> anyhow::Result<(Command, BwrapData)> {
+        let args = self.args.as_bytes().to_vec();
+        self.tempfile(&args)?;
+        let args_fd = self.data.files.last().unwrap().as_raw_fd();
+
+        self.command
+            .arg("--args")
+            .arg(args_fd.to_string())
+            .arg("--");
+
+        Ok((self.command, self.data))
     }
 }
 

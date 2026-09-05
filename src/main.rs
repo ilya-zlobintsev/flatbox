@@ -190,7 +190,7 @@ fn run(run: RunCommand, verbose: bool) -> anyhow::Result<ExitCode> {
 
     // bwrap.bind_data("/etc/ld.so.cache", &[])?;
 
-    let (mut cmd, _data) = bwrap.finish();
+    let (mut cmd, _data) = bwrap.finish()?;
     if verbose {
         eprintln!("Generated cmd: {cmd:#?}");
     }
